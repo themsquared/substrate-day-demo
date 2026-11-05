@@ -1,0 +1,21 @@
+# kind cluster for Agent Substrate 1.0.0-rc2 (from substrate's hack/create-kind-cluster.sh, ipv4).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+# Substrate's pod-certificate controller needs these; they are off by default in Kubernetes 1.37.
+featureGates:
+  ClusterTrustBundle: true
+  ClusterTrustBundleProjection: true
+  PodCertificateRequest: true
+runtimeConfig:
+  "certificates.k8s.io/v1beta1": "true"
+networking:
+  ipFamily: ipv4
+# The install pulls ~570 MB of images onto one node; parallel pulls keep readiness deadlines.
+kubeadmConfigPatches:
+- |
+  kind: KubeletConfiguration
+  serializeImagePulls: false
+  maxParallelImagePulls: 4

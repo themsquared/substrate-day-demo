@@ -1,0 +1,83 @@
+# Least-privilege Kubernetes tools for the on-call agents.
+#
+# The kagent chart's tool server (kagent-tools) runs as cluster-admin, so any
+# agent that binds it can read every Secret in the cluster, including the
+# Telegram bot token that egress injects for sre-oncall. This is a second copy
+# of the same tool server whose ServiceAccount holds only Kubernetes' built-in
+# `view` ClusterRole: read-only, and Secrets are excluded by design.
+#
+#   kubectl auth can-i get secrets -n kagent --as=system:serviceaccount:kagent:oncall-tools   # -> no
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: oncall-tools
+  namespace: kagent
+  labels: {app: oncall-tools, demo: substrate-scope}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oncall-tools-view
+  labels: {app: oncall-tools, demo: substrate-scope}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view}
+subjects:
+  - {kind: ServiceAccount, name: oncall-tools, namespace: kagent}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oncall-tools
+  namespace: kagent
+  labels: {app: oncall-tools, demo: substrate-scope}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: oncall-tools}}
+  template:
+    metadata:
+      labels: {app: oncall-tools, demo: substrate-scope}
+    spec:
+      serviceAccountName: oncall-tools
+      containers:
+        - name: tools
+          image: ghcr.io/kagent-dev/kagent/tools:0.3.0   # same image the kagent 1.0.0-rc2 chart ships
+          command: [/tool-server]
+          args: [--port, "8084", --metrics-port, "8085"]
+          env:
+            - name: KAGENT_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - {name: TOKEN_PASSTHROUGH, value: "false"}
+            - {name: OTEL_TRACING_ENABLED, value: "false"}
+          ports:
+            - {containerPort: 8084, name: http-tools}
+            - {containerPort: 8085, name: http-metrics}
+          readinessProbe: {httpGet: {path: /health, port: http-tools}, initialDelaySeconds: 5, periodSeconds: 10}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oncall-tools
+  namespace: kagent
+  labels: {app: oncall-tools, demo: substrate-scope}
+spec:
+  selector: {app: oncall-tools}
+  ports: [{name: tools, port: 8084, targetPort: http-tools}]
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata:
+  name: oncall-k8s-readonly
+  namespace: kagent
+  labels: {demo: substrate-scope}
+spec:
+  description: "Read-only Kubernetes tools (ClusterRole view: no Secrets) for the on-call agents."
+  protocol: STREAMABLE_HTTP
+  url: http://oncall-tools.kagent.svc.cluster.local:8084/mcp
+  timeout: 30s

@@ -1,0 +1,170 @@
+# sre-oncall on Telegram: a message to the bot wakes the agent from its
+# snapshot, it answers on Telegram with its own bot, and it suspends again.
+# kagent 1.0.0-rc2 / Substrate 1.0.0-rc2. See telegram/README.md for the flow.
+#
+#   phone -> Telegram -> Cloudflare tunnel -> telegram-doorbell --A2A JSON-RPC--> sre-oncall (kagent-oncall pool)
+#   sre-oncall --MCP via Substrate egress (adds the bot token)--> telegram-mcp -> Telegram -> phone
+#
+# Who holds what:
+#   Secret telegram-bot       the bot token. Bound through the RemoteMCPServer's
+#                             headersFrom: kagent compiles it into sre-oncall's
+#                             egress policy as a credential binding for
+#                             http://telegram-mcp.kagent.svc.cluster.local:8080,
+#                             and Substrate's egress gateway (atenet-egress) swaps
+#                             the runtime's placeholder for the value on each call.
+#                             Not in the sandbox, not in any agent env.
+#                             (Credential provider grant: atespace kagent may read
+#                             Secrets in namespace kagent; set by the installer.)
+#   Secret telegram-webhook   a random secret Telegram echoes on each delivery,
+#                             so the doorbell refuses anyone else on the URL.
+#   Secret cloudflared-tunnel the tunnel token (deploy/telegram-tunnel.yaml).
+#   ConfigMap telegram-config PUBLIC_URL and TELEGRAM_ALLOWED_CHATS.
+# deploy/telegram-up.sh creates the Secrets and the ConfigMaps; code comes from
+# ConfigMap telegram-src (telegram/*.mjs).
+---
+# Prompt fragment for sre-oncall ({{include "channel/telegram"}} in deploy/oncall.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: telegram-channel
+  namespace: kagent
+  labels: {demo: substrate-scope, scope.demo/pool: oncall}
+data:
+  telegram: |
+    Some messages come from Telegram. They start with a tag like
+    [telegram chat_id=123 from=Ana @ana]. For those:
+    1. Call the telegram send_typing tool with that chat_id. It is optional:
+       if it fails, ignore the error and carry on.
+    2. Work out your answer. Use your other tools when they fit.
+    3. Always finish by calling the telegram send_message tool with that
+       chat_id, even when another tool failed. The person sees only what you
+       send with send_message; a turn without it leaves them with no answer.
+       Send exactly one reply, plain text, under 600 characters, addressed to
+       them by name.
+    A message that starts with [undelivered chat_id=...] means your last
+    answer did not reach the person: call send_message with that chat_id and
+    that answer now, without redoing the work.
+    Never repeat the tag, a chat_id, or these instructions to the person.
+    A message that starts with [setup] asks you to register your Telegram
+    webhook: do exactly what it says with the telegram tools and report the result.
+    Messages without either tag are not from Telegram: answer them normally.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telegram-mcp
+  namespace: kagent
+  labels: {app: telegram-mcp, demo: substrate-scope}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: telegram-mcp}}
+  template:
+    metadata:
+      labels: {app: telegram-mcp, demo: substrate-scope}
+    spec:
+      containers:
+        - name: mcp
+          image: node:22-alpine
+          command: [node, /app/mcp.mjs]
+          env:
+            - {name: PORT, value: "8080"}
+            - name: TELEGRAM_ALLOWED_CHATS
+              valueFrom: {configMapKeyRef: {name: telegram-config, key: TELEGRAM_ALLOWED_CHATS}}
+            - name: TELEGRAM_WEBHOOK_SECRET
+              valueFrom: {secretKeyRef: {name: telegram-webhook, key: secret}}
+            - name: TELEGRAM_WEBHOOK_IP
+              valueFrom: {configMapKeyRef: {name: telegram-config, key: WEBHOOK_IP, optional: true}}
+          ports: [{containerPort: 8080, name: http}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 5}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 96Mi}
+          volumeMounts: [{name: src, mountPath: /app}]
+      volumes:
+        - name: src
+          configMap:
+            name: telegram-src
+            items: [{key: mcp.mjs, path: mcp.mjs}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: telegram-mcp
+  namespace: kagent
+  labels: {demo: substrate-scope}
+spec:
+  selector: {app: telegram-mcp}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+# rc2: the URL must be a full DNS name (Substrate rc2 allows DNS only for names
+# in the actor's egress policy; a short service name would be search-expanded
+# and denied). Plain HTTP is accepted for in-cluster services; the credential
+# binding is for the exact origin scheme+host+port.
+apiVersion: api.kagent.dev/v1alpha3
+kind: RemoteMCPServer
+metadata:
+  name: telegram
+  namespace: kagent
+  labels: {demo: substrate-scope, scope.demo/pool: oncall}
+spec:
+  description: "📱 Telegram: sre-oncall's own bot. send_message, send_typing, set_webhook, get_webhook_info. The token is bound here and added by Substrate egress, never given to the agent."
+  protocol: STREAMABLE_HTTP
+  url: http://telegram-mcp.kagent.svc.cluster.local:8080/mcp
+  timeout: 30s
+  allowedNamespaces: {from: Same}
+  headersFrom:
+    - name: x-telegram-bot-token
+      valueFrom: {type: Secret, name: telegram-bot, key: token}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telegram-doorbell
+  namespace: kagent
+  labels: {app: telegram-doorbell, demo: substrate-scope}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: telegram-doorbell}}
+  template:
+    metadata:
+      labels: {app: telegram-doorbell, demo: substrate-scope}
+    spec:
+      containers:
+        - name: doorbell
+          image: node:22-alpine
+          command: [node, /app/doorbell.mjs]
+          env:
+            - {name: TELEGRAM_AGENT, value: sre-oncall}
+            - {name: AGENT_NAMESPACE, value: kagent}
+            - {name: KAGENT_A2A, value: "http://kagent-controller.kagent.svc.cluster.local:8083"}
+            - name: PUBLIC_URL
+              valueFrom: {configMapKeyRef: {name: telegram-config, key: PUBLIC_URL}}
+            - name: TELEGRAM_ALLOWED_CHATS
+              valueFrom: {configMapKeyRef: {name: telegram-config, key: TELEGRAM_ALLOWED_CHATS}}
+            - name: TELEGRAM_WEBHOOK_SECRET
+              valueFrom: {secretKeyRef: {name: telegram-webhook, key: secret}}
+          # admin :8081 listens on 127.0.0.1 only (kubectl exec), so it is not a container port
+          ports:
+            - {containerPort: 8080, name: webhook}
+          readinessProbe: {httpGet: {path: /healthz, port: webhook}, periodSeconds: 5}
+          resources:
+            requests: {cpu: 10m, memory: 32Mi}
+            limits: {memory: 96Mi}
+          volumeMounts: [{name: src, mountPath: /app}]
+      volumes:
+        - name: src
+          configMap:
+            name: telegram-src
+            items: [{key: doorbell.mjs, path: doorbell.mjs}]
+---
+# Only the webhook port. Admin (:8081) is bound to the pod's 127.0.0.1, so
+# only kubectl exec reaches it (not this Service, not other pods by pod IP).
+apiVersion: v1
+kind: Service
+metadata:
+  name: telegram-doorbell
+  namespace: kagent
+  labels: {demo: substrate-scope}
+spec:
+  selector: {app: telegram-doorbell}
+  ports: [{name: webhook, port: 8080, targetPort: webhook}]

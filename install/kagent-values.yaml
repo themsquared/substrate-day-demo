@@ -1,0 +1,14 @@
+# Extra values for the kagent chart, passed by install/up.sh through the kagent
+# CLI's install.kagent.valuesFiles.
+#
+# Size the default worker pool. Substrate 1.0 packs actors into a worker by
+# their limits (kagent books each at 1 CPU / 1Gi). Without resources the worker
+# advertises the whole node as capacity; with these it holds exactly 2 actors,
+# the same as kagent-oncall (deploy/oncall.yaml).
+substrateWorkerPool:
+  create: true
+  replicas: 1
+  template:
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "2", memory: 2304Mi}

@@ -1,0 +1,162 @@
+# The on-call bench: five agents on their own WorkerPool, so a page that
+# arrives during a SURGE on kagent-default still gets a worker.
+#
+#   kubectl --context kind-substrate-day apply --dry-run=server -f deploy/oncall.yaml
+#   kubectl --context kind-substrate-day apply -f deploy/oncall.yaml
+#
+# sre-oncall is the one on Telegram. Its template names the telegram
+# RemoteMCPServer and the telegram-channel prompt ConfigMap, both in
+# deploy/telegram.yaml: apply that first (deploy/telegram-up.sh does both, in
+# order). Until they exist sre-oncall is simply not Ready; it reconciles once
+# they appear. The other four have no Telegram binding at all.
+#
+# rc2 notes:
+#   - WorkerPool spec is copied from the chart's kagent-default (workerImage,
+#     sandboxClasses, the kagent-default ServiceAccount). An externally managed
+#     pool MUST carry kagent.dev/worker-pool-name and kagent.dev/worker-pool-namespace:
+#     generated ActorTemplates select workers by those two labels, not by the
+#     WorkerPool object (configuration-and-compilation.md, "WorkerPool sandbox selection").
+#   - The Harness needs its own snapshotPolicy.location (PerTemplateSnapshotLocation
+#     preview, enabled by the kagent installer).
+---
+apiVersion: ate.dev/v1
+kind: WorkerPool
+metadata:
+  name: kagent-oncall
+  namespace: kagent
+  labels:
+    kagent.dev/worker-pool-name: kagent-oncall
+    kagent.dev/worker-pool-namespace: kagent
+    scope.demo/pool: oncall
+    demo: substrate-scope
+spec:
+  replicas: 1
+  sandboxClasses:
+    - name: gvisor
+      configRef: {name: gvisor-default}
+  template:
+    serviceAccountName: kagent-default
+    labels:
+      scope.demo/pool: oncall
+    # Same sizing as kagent-default (the kagent chart's worker). Without it the
+    # worker advertises the whole node as capacity and Substrate 1.0 packs up
+    # to 12 actors onto it at kagent's 1 CPU / 1Gi booking: 2 slots vs 12.
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+      limits: {cpu: "2", memory: 2304Mi}
+  workerImage: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0-rc2
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: kagent-oncall
+  namespace: kagent
+  labels: {scope.demo/pool: oncall, demo: substrate-scope}
+spec:
+  kagent: {}
+  substrate:
+    workerPoolRef: {name: kagent-oncall}
+    snapshotPolicy:
+      location: gs://ate-snapshots/kagent-oncall/
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: sre-oncall
+  namespace: kagent
+  labels: {scope.demo/pool: oncall, demo: substrate-scope, scope.demo/channel: telegram}
+spec:
+  harnessRef: {name: kagent-oncall}
+  template:
+    inline:
+      description: 'SRE on-call, reachable on Telegram. Tools: read-only Kubernetes, 📱 telegram (its own bot; token added by egress)'
+      modelConfig: {name: default-model-config}
+      systemPrompt: |
+        You are the SRE on call for this Kubernetes cluster. You triage calmly
+        and answer in plain language. Prefer one concrete next step over a list.
+        You can look at the cluster with your read-only Kubernetes tools; say
+        what you checked. You never change anything in the cluster.
+
+        {{include "channel/telegram"}}
+      promptTemplate:
+        dataSources:
+          - {name: telegram-channel, alias: channel}
+      tools:
+        - mcp:
+            server: {kind: RemoteMCPServer, name: oncall-k8s-readonly}
+            tools: [k8s_get_resources, k8s_get_events, k8s_get_pod_logs, k8s_describe_resource]
+        # Its own Telegram bot. The token is bound on the RemoteMCPServer
+        # (headersFrom -> Secret telegram-bot) and injected by Substrate's
+        # egress gateway per call: it is never in the sandbox or in any env.
+        # Only this Agent names the server, so only this Agent's actors get
+        # the egress rule (and the credential) for telegram-mcp.
+        - mcp:
+            server: {kind: RemoteMCPServer, name: telegram}
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: db-oncall
+  namespace: kagent
+  labels: {scope.demo/pool: oncall, demo: substrate-scope}
+spec:
+  harnessRef: {name: kagent-oncall}
+  template:
+    inline:
+      description: 'Database on-call: replication lag, connection storms, slow queries'
+      modelConfig: {name: default-model-config}
+      systemPrompt: |
+        You are the database engineer on call. You triage replication lag,
+        connection exhaustion, lock contention and slow queries. Answer in at
+        most three short sentences and end with the single safest next step.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: net-oncall
+  namespace: kagent
+  labels: {scope.demo/pool: oncall, demo: substrate-scope}
+spec:
+  harnessRef: {name: kagent-oncall}
+  template:
+    inline:
+      description: 'Network on-call: DNS, ingress, TLS, packet loss'
+      modelConfig: {name: default-model-config}
+      systemPrompt: |
+        You are the network engineer on call. You triage DNS failures, ingress
+        and load balancer errors, expired certificates and packet loss. Answer
+        in at most three short sentences and end with the single safest next step.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: sec-oncall
+  namespace: kagent
+  labels: {scope.demo/pool: oncall, demo: substrate-scope}
+spec:
+  harnessRef: {name: kagent-oncall}
+  template:
+    inline:
+      description: 'Security on-call: leaked credentials, suspicious access, CVE triage'
+      modelConfig: {name: default-model-config}
+      systemPrompt: |
+        You are the security engineer on call. You triage leaked credentials,
+        suspicious access and new CVEs. Contain first, investigate second.
+        Answer in at most three short sentences and end with the single safest next step.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: platform-oncall
+  namespace: kagent
+  labels: {scope.demo/pool: oncall, demo: substrate-scope}
+spec:
+  harnessRef: {name: kagent-oncall}
+  template:
+    inline:
+      description: 'Platform on-call: nodes, quotas, deploy pipeline, cluster upgrades'
+      modelConfig: {name: default-model-config}
+      systemPrompt: |
+        You are the platform engineer on call. You triage node pressure, quota
+        exhaustion, stuck rollouts and failed cluster upgrades. Answer in at most
+        three short sentences and end with the single safest next step.

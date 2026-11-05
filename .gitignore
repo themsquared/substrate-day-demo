@@ -1,0 +1,9 @@
+install/bin/
+install/kubeconfig-*
+install/kagent-cli-config.yaml
+slides/*.pptx
+!slides/kubectl-is-lying-public.pdf
+memes/
+.DS_Store
+node_modules/
+*.log

@@ -1,0 +1,274 @@
+# Substrate Scope demo fleet: 13 general-purpose agents on kagent 1.0.0-rc2.
+#
+# Each Agent runs on the `kagent` Harness below, whose Substrate WorkerPool is
+# kagent-default (created by the kagent chart): every agent is a suspended actor
+# (a snapshot) until a chat restores it onto a worker. 13 agents, one worker pod.
+# The kagent 1.0.0-rc2 installer creates the pool but NO Harness, so it is here.
+#
+#   kubectl apply --dry-run=server -f deploy/fleet.yaml
+#   kubectl apply -f deploy/fleet.yaml
+#   kubectl wait --for=condition=Ready agents.api.kagent.dev -n kagent -l demo=substrate-scope --timeout=300s
+#
+# Short system prompts keep demo turns cheap (claude-haiku-4-5); SURGE asks for
+# ~120 words so each turn holds its worker long enough to see.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Harness
+metadata:
+  name: kagent
+  namespace: kagent
+  labels: {demo: substrate-scope, scope.demo/pool: default}
+spec:
+  kagent: {}
+  substrate:
+    workerPoolRef: {name: kagent-default}
+    # rc2 requires a per-Harness snapshot location
+    snapshotPolicy:
+      location: gs://ate-snapshots/kagent/
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: incident-scribe
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: An incident scribe running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are an incident scribe. You summarize outages into crisp timelines. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: release-notary
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A release notary running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a release notary. You draft changelogs and confirm rollout status. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: cost-warden
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A cost warden running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a cost warden. You flag wasteful workloads and idle capacity. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: drift-sentinel
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A drift sentinel running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a drift sentinel. You spot config drift between clusters. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: chaos-probe
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A chaos probe running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a chaos probe. You propose safe failure experiments. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: doc-curator
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A docs curator running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a docs curator. You keep runbooks accurate and short. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: patch-smith
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A patch smith running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a patch smith. You draft minimal, safe remediation patches. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: capacity-planner
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A capacity planner running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a capacity planner. You size clusters from demand curves, not guesses. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: log-whisperer
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A log whisperer running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a log whisperer. You find the one log line that explains the outage. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: cert-warden
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A certificate warden running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a certificate warden. You track expiring certs and rotation plans. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: slo-auditor
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: An SLO auditor running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are an SLO auditor. You check error budgets and call out burn rates. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: k8s-tutor
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A Kubernetes tutor running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a Kubernetes tutor. You explain cluster concepts plainly to newcomers. Be brief unless the user asks for detail.
+---
+apiVersion: api.kagent.dev/v1alpha3
+kind: Agent
+metadata:
+  name: postmortem-coach
+  namespace: kagent
+  labels:
+    demo: substrate-scope
+    scope.demo/pool: default
+spec:
+  harnessRef:
+    name: kagent
+  template:
+    inline:
+      description: A postmortem coach running as a Substrate actor
+      modelConfig:
+        name: default-model-config
+      systemPrompt: |
+        You are a postmortem coach. You turn incidents into blameless lessons. Be brief unless the user asks for detail.
