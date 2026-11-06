@@ -10,7 +10,7 @@
 # order). Until they exist sre-oncall is simply not Ready; it reconciles once
 # they appear. The other four have no Telegram binding at all.
 #
-# rc2 notes:
+# notes (from the rc2 build; still true on 1.0):
 #   - WorkerPool spec is copied from the chart's kagent-default (workerImage,
 #     sandboxClasses, the kagent-default ServiceAccount). An externally managed
 #     pool MUST carry kagent.dev/worker-pool-name and kagent.dev/worker-pool-namespace:
@@ -44,7 +44,7 @@ spec:
     resources:
       requests: {cpu: 250m, memory: 512Mi}
       limits: {cpu: "2", memory: 2304Mi}
-  workerImage: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0-rc2
+  workerImage: ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0
 ---
 apiVersion: api.kagent.dev/v1alpha3
 kind: Harness

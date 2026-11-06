@@ -1,6 +1,6 @@
 # sre-oncall on Telegram: a message to the bot wakes the agent from its
 # snapshot, it answers on Telegram with its own bot, and it suspends again.
-# kagent 1.0.0-rc2 / Substrate 1.0.0-rc2. See telegram/README.md for the flow.
+# kagent 1.0.0-rc3 / Substrate 1.0.0 (also ran on rc2). See telegram/README.md for the flow.
 #
 #   phone -> Telegram -> Cloudflare tunnel -> telegram-doorbell --A2A JSON-RPC--> sre-oncall (kagent-oncall pool)
 #   sre-oncall --MCP via Substrate egress (adds the bot token)--> telegram-mcp -> Telegram -> phone
@@ -96,7 +96,7 @@ spec:
   selector: {app: telegram-mcp}
   ports: [{name: http, port: 8080, targetPort: http}]
 ---
-# rc2: the URL must be a full DNS name (Substrate rc2 allows DNS only for names
+# Substrate 1.0: the URL must be a full DNS name (DNS is allowed only for names
 # in the actor's egress policy; a short service name would be search-expanded
 # and denied). Plain HTTP is accepted for in-cluster services; the credential
 # binding is for the exact origin scheme+host+port.

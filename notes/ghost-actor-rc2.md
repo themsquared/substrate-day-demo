@@ -2,6 +2,7 @@
 
 Status: analysis of a ghost-actor failure seen on kagent 1.0.0-rc2 + Substrate 1.0.0-rc2 while building this demo.
 Rig: `kind-substrate-day`. Written 2026-11-04 (local, PST). All log timestamps are UTC.
+Updated 2026-11-06: §8 checks the 1.0.0 GA stack (kagent 1.0.0-rc3 + Substrate 1.0.0) against the released sources.
 
 Each claim has one of two labels:
 - **[PROVEN]**: seen in live logs or state on this rig, or read directly in the source at the tag that is deployed.
@@ -277,3 +278,80 @@ Paths are under `cmd/ateapi/internal/controlapi/`.
   during a surge, so fewer ghosts. This is not applied to the rig and not tested.
 - Stage plan for the talk: after each SURGE beat, if a `Resuming` chip does not move within about 10 s, press RESET
   POOL before the next beat.
+
+---
+
+## 8. Status on 1.0.0 GA (kagent 1.0.0-rc3 + Substrate 1.0.0), checked 2026-11-06
+
+Nothing below was run on a cluster. The live rig is still rc2 (`helm list -A` on `kind-substrate-day`: `kagent-1.0.0-rc2`,
+`substrate-1.0.0-rc2`, router `agentgateway:v1.7.0@sha256:60216aaf…`, ConfigMap budget `"5s"`). Every GA claim is
+from the released sources and the published charts, with the same labels as above:
+**[PROVEN]** = read directly in the tagged source, chart or release artifact; **[INFERRED]** = reasoned from it.
+
+### 8.1 What the GA stack deploys [PROVEN]
+
+| Component | rc2 (as deployed) | 1.0.0 GA (as released) |
+|---|---|---|
+| kagent | `1.0.0-rc2` (git `4a5c758`) | `1.0.0-rc3`, released 2026-11-06, git `3548b7a`; its `go.mod` replaces `go.ate.dev/substrate` with `github.com/kagent-dev/substrate v1.0.0` |
+| Substrate chart | `substrate-1.0.0-rc2` | `oci://ghcr.io/kagent-dev/substrate/helm/substrate` `1.0.0` (fork tag `v1.0.0` = `563df06f`), plus new `substrate-atelet` `1.0.0` (PR #135); `kagent install` now installs atelet as its own release |
+| atenet-router image | `cr.agentgateway.dev/agentgateway:v1.7.0@sha256:60216aaf…` | **identical**: `charts/substrate/values.yaml:250` and the published chart's values pin the same tag **and the same digest** |
+| Parking budget default | `5s` (chart `values.yaml:148`) | `60s` (`atenetRouter.requestParking.budget`, PR #118 exposed the key at `5s`, PR #134 raised it to `60s`) |
+| Router per-call timeout | not exposed | `atenetRouter.requestTimeout: "60s"` → `substrateIngress.policies.http.requestTimeout` (PR #134) |
+| kagent installer | sets only `preview: [PerTemplateSnapshotLocation]` | sets `preview: [PerTemplateSnapshotLocation, GoldenEgressPolicy]`; sets **no** parking or timeout values (`go/core/pkg/install/plan.go`), so a fresh rc3 install runs the chart defaults: 60s / 60s |
+| agentgateway upstream | `v1.7.0` (2026-10-27) | still the latest release. `ingress.rs` on `main` differs from `v1.7.0` only in error-type plumbing (27 diff lines, PR #4250); the resume loop is unchanged |
+
+### 8.2 Step 1 of the ghost (router cancels the in-flight ResumeActor at the budget): **still there** [PROVEN in source]
+
+The GA chart ships the same agentgateway binary by digest, so `crates/agentgateway/src/http/substrate/ingress.rs` is the
+file analysed in §5.1, line for line: `:335` `deadline = now + budget`, `:367` `tokio::time::timeout(remaining,
+control.resume_actor(request))`, `:418-420` `sleep(delay.min(remaining))`, `:427` returns `last_retry_status`. The same
+lines are on agentgateway `main` today. No agentgateway PR or issue addresses it (searched "substrate parking resume" /
+"substrate resume cancel"; only #3051 "Deeper Agent Substrate Integration", merged in August).
+
+What changed is the budget: 5s → 60s by default. A restore in flight when a 60s budget ends is still dropped the same
+way. [INFERRED] With the demo's 110–430 ms restores, the race window is the same width; it is hit far less often because
+a surge rarely parks a request for a full minute. On the rig it would take ~12× the rc2 wait to see one.
+
+### 8.3 Step 2 (ateapi leaves the actor RESUMING, nobody re-drives it): **still there** [PROVEN in source]
+
+Fork `v1.0.0` vs upstream `v1.0.0-rc.2`, `cmd/ateapi/internal/controlapi/`:
+- `workflow_resume.go`, `workflow_reconcile_assignments.go`: byte-identical apart from the copyright header.
+- `crash.go:96-100`: the `ctx.Err() != nil` branch that keeps the assignment "so a retry can finish the operation" is
+  unchanged (the only diff is `UpdateActorAndRelease` now also returning the Worker).
+- `workflow_reconcile_assignments.go:176-182`: the `ACTOR_STATE_RESUMING` → "left to its resume" skip is unchanged.
+- `store/atepg/lease.go:57`: the lease context is still `context.WithCancel(<request ctx>)`.
+- `workflow_worker_delete.go`: the only release path is still the worker pod going away (signature-only diff).
+- Upstream `main` (fetched 2026-11-06) has the same `crash.go:98` and `workflow_reconcile_assignments.go:176` lines.
+
+The fix that would close this is open upstream: **agent-substrate/substrate PR #2558** "ateapi: run lifecycle workflows to
+their end when the caller goes away" (dims, opened 2026-10-13, updated 2026-10-31, OPEN) — `acquireLease` drops the
+caller's cancellation and bounds the workflow at 30 minutes; its description names exactly this symptom ("the actor
+stayed SUSPENDING, PAUSING or RESUMING with its worker assigned"). Related and also open: #3361 (router answers a
+retryable 503 instead of an empty 504 when a resume outlasts the budget; Go/Envoy router only) and #2479 (retry a resume
+a rolling worker pool interrupts). None of these is in `v1.0.0`.
+
+What the 1.0.0 release notes do say about resumes: #2602 "atelet: detach Checkpoint from caller cancellation once
+underway" is in. It detaches **Checkpoint**, not Restore — the suspend side of the same family of bugs — so a canceled
+restore is not covered. Neither release's notes (agent-substrate `v1.0.0`, kagent-dev `v1.0.0`) contains the phrase
+"no longer repairs" or any statement about repairing RESUMING drift; I searched both bodies and both repos' docs. If that
+phrase was quoted to you from somewhere else, treat it as unverified.
+
+### 8.4 What the demo should expect on a GA rig [INFERRED unless noted]
+
+- The ghost mechanism is intact; the trigger is ~12× less likely per parked request with the 60s default. The §7
+  operator workaround (RESET POOL) and Scope's 👻 detection are unchanged and still needed.
+- The SURGE beat changes shape: a pool-full chat now sits in the router for up to **60s** before the gateway answers
+  `-32004`, so the "client retry" layer of the waiting lane fills a minute later than on rc2 (where it filled at 5s).
+  Scope and `deploy/preflight.sh` now read `requestParking.budget` from the router ConfigMap and quote it, instead of
+  the "~5s" that was hard-coded. [PROVEN: the regex returns `5s`/none on the rig and `60s`/`60s` on the rendered 1.0.0
+  chart]
+- To keep the rc2 feel on a GA rig, set `atenetRouter.requestParking.budget: 5s` in the substrate values at install
+  time; `kagent install` passes through a substrate values file. Not applied anywhere; not tested.
+- kagent rc3's `SessionService/DeleteSession` gained `force` (bool, field 2): a session mid-turn can now be deleted
+  without waiting. [PROVEN in `sessions.proto` and `database/session_deletion.go`] It is kagent work-record cleanup; the
+  deletion comment says "RESUMING alone does not block deletion", but deleting the session only frees the Substrate
+  slot through the actor delete workflow, which this note did not trace on GA. Do not count on it as a ghost cure.
+- Scope's own retry-into-the-same-session fix (§6, "Ours") is unaffected: the A2A gateway, SessionService
+  Create/List and the `-32004` reason code are byte-identical in rc3. One rc3 change in `session/interactions.go` makes a
+  retried message with the same `messageId` in an existing session return the saved task instead of sending again;
+  Scope numbers each attempt's messageId, so it never hits that path.

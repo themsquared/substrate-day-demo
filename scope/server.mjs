@@ -6,8 +6,9 @@
 //   node server.mjs                        # simulated feed (built into the page)
 //   KUBE_CONTEXT=kind-substrate-day node server.mjs --live
 //
-// Live mode reads the kagent 1.0 controller (kagent 1.0.0-rc2 + Substrate
-// 1.0.0-rc.2) over gRPC-Web — SystemService for the Substrate inventory,
+// Live mode reads the kagent 1.0 controller (kagent 1.0.0-rc2 and rc3,
+// Substrate 1.0.0-rc2 and 1.0.0; see lib/kagent.mjs) over gRPC-Web —
+// SystemService for the Substrate inventory,
 // SessionService + A2A ListTasks for chats started anywhere else (the kagent
 // UI, Telegram) — and sends chats as A2A 1.0 SendMessage. kubectl supplies
 // what the controller does not: WorkerPools (scale / reset), Agents ->
@@ -177,7 +178,7 @@ const server = createServer(async (req, res) => {
   if (path === '/chat' && req.method === 'POST') {
     // the drawer's "talk to the agent": one real chat, which restores the
     // actor — activation you can watch happen on the board
-    if (!LIVE || mode !== 'rc2') return json(res, { ok: false, error: `chat needs --live against a kagent 1.0 controller (mode: ${mode})` });
+    if (!LIVE || mode !== 'kagent1') return json(res, { ok: false, error: `chat needs --live against a kagent 1.0 controller (mode: ${mode})` });
     if (!demoRun) return json(res, { ok: false, error: 'demo is stopped (STOP DEMO)' });
     try {
       const { ns, agent, text, wait, contextId } = JSON.parse(await readBody(req));
@@ -192,7 +193,7 @@ const server = createServer(async (req, res) => {
     } catch { return json(res, { ok: false }, 400); }
   }
   if (path === '/surge' && req.method === 'POST') {
-    if (!LIVE || mode !== 'rc2') return json(res, { ok: false, error: `surge needs --live against a kagent 1.0 controller (mode: ${mode})` });
+    if (!LIVE || mode !== 'kagent1') return json(res, { ok: false, error: `surge needs --live against a kagent 1.0 controller (mode: ${mode})` });
     if (!demoRun) return json(res, { ok: false, error: 'demo is STOPPED — press START first' });
     return json(res, { ok: true, ...(await surge()) });
   }
@@ -219,7 +220,7 @@ const server = createServer(async (req, res) => {
     // (A2A ListTasks filtered by contextId) — for sessions Scope did not see
     // live: an earlier run, the kagent UI, Telegram
     const agent = url.searchParams.get('agent'), ctx = url.searchParams.get('ctx');
-    if (!LIVE || mode !== 'rc2' || !agent || !/^[0-9a-f-]{36}$/i.test(ctx ?? '')) return json(res, { ok: false, items: [] });
+    if (!LIVE || mode !== 'kagent1' || !agent || !/^[0-9a-f-]{36}$/i.test(ctx ?? '')) return json(res, { ok: false, items: [] });
     try {
       const ns = agentRoutes[agent]?.ns ?? KAGENT_NS;
       const items = (await kg.sessionHistory(ns, agent, ctx)).map(({ messageId, ...e }) =>
@@ -342,7 +343,7 @@ function slotsFor(w) {
 const totalSlots = () => (state.lastSnap?.workerPools ?? []).reduce((s, p) => s + (p.slots ?? 0), 0);
 
 // ── controller connection + detection ───────────────────────────────────────
-let mode = 'none';             // rc2 | legacy | none
+let mode = 'none';             // kagent1 (1.0 gRPC-Web controller: rc2, rc3, GA) | legacy (0.10 REST) | none
 // kubectl runs under a tiny sh guard that holds a pipe from Scope: if Scope
 // dies in ANY way (even kill -9), the pipe closes and the guard kills its
 // kubectl, so no port-forward is left orphaned. A respawn re-uses the local
@@ -387,8 +388,8 @@ async function detect() {
     const v = await kg.version();
     if (!v?.kagent_version) throw new Error('GetVersion returned no kagent_version');
     versions.kagent = v.kagent_version;
-    if (mode !== 'rc2') console.log(`controller: kagent ${v.kagent_version} (${v.git_commit}) — gRPC-Web SystemService`);
-    mode = 'rc2';
+    if (mode !== 'kagent1') console.log(`controller: kagent ${v.kagent_version} (${v.git_commit}) — gRPC-Web SystemService`);
+    mode = 'kagent1';
     return true;
   } catch (e) {
     let restInfo = '';
@@ -409,7 +410,7 @@ async function detect() {
   }
 }
 
-// ── snapshot: the board's shape, from the rc2 inventory ─────────────────────
+// ── snapshot: the board's shape, from the kagent 1.0 inventory ──────────────
 const slotMaps = new Map();    // workerPod -> Map(actorId -> slot index), keeps bays stable
 let invFailures = 0;
 function mapSnapshot(inv) {
@@ -484,7 +485,7 @@ function mapSnapshot(inv) {
              slotsShown: poolSlots[name]?.shown ?? null, requests: k?.requests ?? null, limits: k?.limits ?? null };
   }).sort((a, b) => (a.name === DEFAULT_POOL ? -1 : b.name === DEFAULT_POOL ? 1 : a.name.localeCompare(b.name)));
   const agentPools = Object.fromEntries(Object.entries(agentRoutes).map(([n, r]) => [n, r.pool]));
-  return { enabled: true, controller: 'rc2', workerPools, actorTemplates, actors, workers, agentPools,
+  return { enabled: true, controller: 'kagent1', workerPools, actorTemplates, actors, workers, agentPools,
            agentRoutes, booking: { cpuM: booking.cpu, memMi: Math.round(booking.mem / 2 ** 20), source: booking.source },
            counts: { sessions: sessionCount, actors: Number(inv.summary?.actor_count ?? inv.actors.length), workers: Number(inv.summary?.worker_count ?? inv.workers.length),
                      running: Number(inv.summary?.running_actor_count ?? 0), busyWorkers: Number(inv.summary?.busy_worker_count ?? 0) },
@@ -512,7 +513,7 @@ async function poll() {
   try {
     let snap = null;
     if (mode === 'none' && !(await detect())) return;
-    if (mode === 'rc2') {
+    if (mode === 'kagent1') {
       try {
         const inv = await kg.inventory();
         state.lastInv = inv;
@@ -520,7 +521,7 @@ async function poll() {
         invFailures = 0;
       } catch (e) {
         if (++invFailures >= 3) { mode = 'none'; await detect(); }
-        if (invFailures >= 3 && mode === 'rc2')
+        if (invFailures >= 3 && mode === 'kagent1')
           setHealth('error', `Substrate inventory call failing: ${String(e.message).slice(0, 200)}`);
         return;
       }
@@ -571,7 +572,8 @@ const clip = (t, n = 600) => t.length > n ? t.slice(0, n - 1).replace(/\s+\S*$/,
 
 // ── Prometheus: atenet-router parking + ate-api scheduler ───────────────────
 // Read through the API server's pod proxy (no port-forward to keep alive).
-// Names verified on rc2: agentgateway_substrate_request_parking_active
+// Names verified on rc2 (the 1.0.0 chart ships the same agentgateway v1.7.0
+// image, by digest): agentgateway_substrate_request_parking_active
 // (router gauge), agentgateway_atenet_router_route_duration_seconds{
 // ate_router_outcome}, ate_scheduler_assignment_duration_seconds{
 // ate_scheduler_outcome="no_capacity", ate_workerpool_name} (ate-api-server).
@@ -588,8 +590,19 @@ function parseProm(text) {
   return out;
 }
 let scrapeTargets = { router: [], api: [], at: 0 };
+// The router's parking budget and per-call timeout, from its ConfigMap
+// (charts/substrate values atenetRouter.requestParking.budget / requestTimeout:
+// 5s / unset on the rc2 chart, 60s / 60s on the 1.0.0 chart). The board and
+// the feed quote the real value instead of assuming one.
+let routerConfig = { budget: null, requestTimeout: null };
 async function discoverScrape() {
-  const pods = await kubectl(['get', 'pods', '-n', 'ate-system', '-o', 'json']);
+  const [pods, cms] = await Promise.all([
+    kubectl(['get', 'pods', '-n', 'ate-system', '-o', 'json']),
+    kubectl(['get', 'configmaps', '-n', 'ate-system', '-o', 'json']),
+  ]);
+  const cfg = (cms?.items ?? []).find(c => /atenet-router-agentgateway-config$/.test(c.metadata?.name ?? ''))?.data?.['config.yaml'] ?? '';
+  routerConfig = { budget: cfg.match(/requestParking:\s*\n\s*budget:\s*"?([\w.]+)"?/)?.[1] ?? null,
+                   requestTimeout: cfg.match(/\n\s*requestTimeout:\s*"?([\w.]+)"?/)?.[1] ?? null };
   const pick = app => (pods?.items ?? []).filter(p => p.metadata.labels?.app === app && p.status?.phase === 'Running')
     .map(p => ({ name: p.metadata.name, port: p.metadata.annotations?.['prometheus.io/port']
       ?? p.spec.containers.flatMap(c => c.ports ?? []).find(x => /metrics|prometheus/.test(x.name ?? ''))?.containerPort }))
@@ -611,7 +624,7 @@ async function scrapeRouter() {
     const k = s.labels.ate_router_outcome ?? '?';
     outcomes[k] = (outcomes[k] ?? 0) + s.value;
   }
-  // no_capacity carries no ate_workerpool_name on rc.2 (verified): a total
+  // no_capacity carries no ate_workerpool_name on rc2 (verified): a total
   const assigned = {};
   let schedPresent = false, noCapacity = 0;
   for (const s of as.filter(s => s.name === 'ate_scheduler_assignment_duration_seconds_count')) {
@@ -640,6 +653,7 @@ async function scrapeRouter() {
     routerPods: scrapeTargets.router.map(t => `${t.name}:${t.port}`), apiPods: scrapeTargets.api.map(t => `${t.name}:${t.port}`),
     parked: parkedSeries.length ? parkedSeries.reduce((s, x) => s + x.value, 0) : null,
     parkedMetric: parkedSeries[0]?.name ?? null,
+    budget: routerConfig.budget, requestTimeout: routerConfig.requestTimeout,
     rejected: rejSeries.length ? rejSeries.reduce((s, x) => s + x.value, 0) : null,
     rejectedMetric: rejSeries[0]?.name ?? null,
     outcomes, schedPresent, noCapacity: schedPresent ? noCapacity : null, assigned,
@@ -689,7 +703,7 @@ function telemetryBasis() {
 }
 async function sampleMetrics() {
   const snap = state.lastSnap;
-  if (!snap || snap.controller !== 'rc2') return;
+  if (!snap || snap.controller !== 'kagent1') return;
   if (!nodes.length) nodes = ((await kubectl(['get', 'nodes', '-o', 'json']))?.items ?? []).map(n => n.metadata.name);
   const { inChart } = chartPools();
   const charted = new Set(inChart.map(p => p.name));
@@ -804,8 +818,10 @@ function recordActivity(ev) {
 }
 
 // ── queue lane: router parking + client retry ───────────────────────────────
-// Substrate 1.0 PARKS a request in atenet-router (~5s) while no worker has
-// room, then fails it (-32004 through the gateway). So "waiting" has two
+// Substrate 1.0 PARKS a request in atenet-router for its parking budget
+// (routerStats.budget, read from the router ConfigMap: 5s on the rc2 chart,
+// 60s on the 1.0.0 chart) while no worker has room, then fails it (-32004
+// through the gateway). So "waiting" has two
 // layers: chats still inside SendMessage that have no actor on a worker yet
 // (parked in the router), and chats that were refused and sit in a client
 // retry backoff. Both are counted per CHAT, not per agent: an agent that is
@@ -908,7 +924,7 @@ async function chatWithAgent(ns, name, prompt, via, { contextId } = {}) {
         if (!waited) {
           waited = true;
           recordActivity({ agent: name, kind: 'queued', via, contextId: c.contextId,
-            text: `${r.busy ? 'session busy (a restore is unwinding)' : 'pool full — atenet-router parked it ~5s, then gave up'} (${String(r.error).slice(0, 140)}); retrying in the same session` });
+            text: `${r.busy ? 'session busy (a restore is unwinding)' : 'pool full — atenet-router parked it for its ' + (routerStats.budget ? routerStats.budget + ' ' : '') + 'parking budget, then gave up'} (${String(r.error).slice(0, 140)}); retrying in the same session` });
         }
         c.phase = 'retry'; computeQueue();
       },
@@ -966,7 +982,7 @@ const sessionStart = Date.now() - 120_000;
 const TERMINAL = /COMPLETED|FAILED|CANCELED|REJECTED|INPUT_REQUIRED|AUTH_REQUIRED/;
 let sessionCount = null, warnedTrunc = false;
 async function pollSessions() {
-  if (mode !== 'rc2') return;
+  if (mode !== 'kagent1') return;
   const hot = new Set();
   try {
     const { sessions, truncated } = await kg.sessions();

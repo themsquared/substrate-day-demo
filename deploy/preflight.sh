@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Preflight for a live Substrate Scope demo on kagent 1.0.0-rc2 + Substrate 1.0.0-rc.2.
+# Preflight for a live Substrate Scope demo on kagent 1.0.0-rc2/rc3 + Substrate 1.0.0-rc2/1.0.0.
 #
 #   KUBE_CONTEXT=kind-substrate-day deploy/preflight.sh
 #   SKIP_TURN=1 deploy/preflight.sh          # skip the one billable LLM turn
 #   AGENT=sre-oncall deploy/preflight.sh
 #
 # Checks, in order: cluster reachable, control-plane pods healthy, every Agent
-# Ready, WorkerPools at their replica count, controller reachable over
-# gRPC-Web (SystemService) with a non-empty inventory, atenet-router and
-# ate-api-server metrics reachable, one real A2A turn, and (if running) Scope.
+# Ready, WorkerPools at their replica count, the router's parking budget,
+# controller reachable over gRPC-Web (SystemService) with a non-empty
+# inventory, atenet-router and ate-api-server metrics reachable, one real A2A
+# turn, and (if running) Scope.
 # Exit code = number of failed checks. Never prints secrets.
 set -uo pipefail
 
@@ -70,6 +71,17 @@ out=$("${K[@]}" get workerpools.ate.dev -A -o json | node -e '
     console.log(`${ready === want ? "OK" : "BAD"}|${tag}: ${ready}/${want} ready, image ${p.spec.workerImage}`);
     if (!lim) console.log(`WARN|${tag}: no pod limits — each worker advertises the whole node, so the pool never looks full`);
   }')
+report "$out"
+
+step "atenet-router config"
+out=$("${K[@]}" get configmaps -n ate-system -o json 2>/dev/null | node -e '
+  const j = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  const c = (j.items ?? []).find(c => /atenet-router-agentgateway-config$/.test(c.metadata?.name ?? ""))?.data?.["config.yaml"] ?? "";
+  const b = c.match(/requestParking:\s*\n\s*budget:\s*"?([\w.]+)"?/)?.[1], t = c.match(/\n\s*requestTimeout:\s*"?([\w.]+)"?/)?.[1];
+  // 5s on the rc2 chart, 60s on the 1.0.0 chart (kagent install sets neither):
+  // a pool-full chat waits this long in the router before the gateway answers -32004
+  console.log(b ? `OK|parking budget ${b}${t ? `, request timeout ${t}` : ""} — a pool-full chat waits that long before -32004 (rc2 chart default 5s, 1.0.0 chart 60s)`
+                : "WARN|router ConfigMap not found or has no requestParking.budget (rc2 chart default is 5s)");')
 report "$out"
 
 step "controller (gRPC-Web SystemService)"

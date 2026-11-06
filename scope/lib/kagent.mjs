@@ -1,5 +1,10 @@
 // kagent 1.0 adapter: everything Scope reads from (and sends to) the kagent
-// controller on :8083, for kagent 1.0.0-rc2 + Agent Substrate 1.0.0-rc.2.
+// controller on :8083. Written against kagent 1.0.0-rc2 + Substrate 1.0.0-rc2
+// and checked against kagent 1.0.0-rc3 + Substrate 1.0.0 (2026-11-06): every
+// surface Scope uses is byte-identical in rc3 (grpcweb.go, system.go,
+// a2agateway/http.go, a2a_version.go). The one schema change rc2 -> rc3 is
+// DeleteSessionRequest.force (bool, field 2), which lib/schema.json carries
+// and rc2 ignores. See README "Version pins" for what was run live.
 //
 // What changed from kagent 0.10 (and why the board went blank):
 //   * The controller has no REST /api/* any more. /api/substrate/status now
@@ -54,11 +59,14 @@ export function sourceOf(messageId = '', text = '') {
 }
 
 // Why a send did not reach an agent because the pool had no room. Substrate
-// 1.0 parks the request in atenet-router (~5s budget) and then fails it
+// 1.0 parks the request in atenet-router for the chart's parking budget
+// (atenetRouter.requestParking.budget: 5s on the rc2 chart, 60s on the 1.0.0
+// chart; kagent's installer sets neither) and then fails it
 // (router outcome resume_error; scheduler outcome no_capacity). Through the
 // kagent A2A gateway that surfaces as JSON-RPC -32004 "input was not
 // accepted; retry after the session becomes available" with reason
-// KAGENT_SEND_NOT_ACCEPTED (verified on rc2); a direct router call says
+// KAGENT_SEND_NOT_ACCEPTED (verified on rc2; the gateway code is unchanged
+// in rc3); a direct router call says
 // "503 actor <id> unavailable: no worker has room for the actor".
 export const POOL_FULL = /KAGENT_SEND_NOT_ACCEPTED|input was not accepted|retry after the session|no worker has room|router at capacity|resource.?exhausted|no free workers|worker is full/i;
 // The Session exists but is mid lifecycle operation (a restore the router just
@@ -211,6 +219,13 @@ export function kagent({ apiBase, user = 'admin@kagent.dev', atespace = '' }) {
     return { contextId, session: s };
   }
 
+  // SessionService/DeleteSession. `force` (kagent 1.0.0-rc3+) ends an active
+  // turn instead of refusing the delete; rc2 ignores the field and refuses
+  // while a turn runs. For cleanup tooling; the board never deletes.
+  async function deleteSession(id, { force = false } = {}) {
+    return unary(SESS + 'DeleteSession', { session_id: id, ...(force && { force: true }) }, { timeout: 15_000 });
+  }
+
   // ONE logical chat = ONE Session, however many times it is retried.
   //
   // kagent 1.0 creates a Session for every SendMessage that has no contextId,
@@ -281,6 +296,6 @@ export function kagent({ apiBase, user = 'admin@kagent.dev', atespace = '' }) {
     return items.sort((a, b) => a.t - b.t);
   }
 
-  return { version, inventory, send, listTasks, findTask, sessions, createSession, converse, sessionHistory,
-           base, unary, GrpcError };
+  return { version, inventory, send, listTasks, findTask, sessions, createSession, deleteSession, converse,
+           sessionHistory, base, unary, GrpcError };
 }

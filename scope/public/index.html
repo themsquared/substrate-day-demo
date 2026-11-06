@@ -208,8 +208,8 @@
   .chip.flag-busiest::after{content:'🔥';filter:drop-shadow(0 0 3px rgba(255,180,84,.6))}
   .chip.flag-starved::after{content:'🍽️';filter:drop-shadow(0 0 4px rgba(242,143,173,.8))}
   .chip.flag-noisy .nm,.chip.flag-busiest .nm,.chip.flag-starved .nm{padding-right:16px}
-  /* 👻 a ghost: an actor stuck Resuming on a bay (rc2 leaves one behind when a
-     restore is cancelled) — it holds a slot and does no work */
+  /* 👻 a ghost: an actor stuck Resuming on a bay (Substrate 1.0.0-rc2 and 1.0.0
+     leave one behind when a restore is cancelled) — it holds a slot and does no work */
   .chip.stuck{border:1px dashed rgba(242,143,173,.85) !important;background:rgba(242,143,173,.10) !important;
               animation:none !important;box-shadow:none !important}
   .chip.stuck .st{color:var(--warn) !important}
@@ -1070,11 +1070,18 @@
          : st.includes('suspend') ? 'checkpointing' : 'running';
   };
   // ── 👻 ghosts: actors stuck Resuming on a bay ─────────────
-  // rc2 leaves an actor in Resuming for good when its restore is cancelled
+  // Substrate 1.0 (rc2 and 1.0.0 alike: same agentgateway router, same ateapi
+  // path) leaves an actor in Resuming for good when its restore is cancelled
   // (the router gave up on the request that started it): it holds a worker
   // slot and does no work until the pool is bounced. A real restore takes
-  // ~1-3s, so Resuming on a bay for longer than STUCK_MS is a ghost.
-  const STUCK_MS = 20_000;
+  // ~1-3s; a cold image pull after atelet's cache GC can take 30-60s. So:
+  // past SLOW_MS the feed says "slow restore" (no ghost), and only past the
+  // router's parking budget + 15s (never under 60s) is it a ghost.
+  const SLOW_MS = 20_000;
+  const budgetMs = () => { const m = /^(\d+(?:\.\d+)?)(ms|s|m)?$/.exec(String(routerBudget ?? '').trim());
+    if (!m) return 0; const n = Number(m[1]); return m[2] === 'ms' ? n : m[2] === 'm' ? n * 60_000 : n * 1000; };
+  const stuckMs = () => Math.max(60_000, budgetMs() + 15_000);
+  const slow = new Set();
   const resumingSince = new Map();   // actorId -> first seen Resuming on a bay (ms)
   const stuck = new Map();           // actorId -> {chip, agent, pool, pod, since}
   const resetAt = {};                // pool -> when RESET POOL was pressed (ms)
@@ -1086,7 +1093,11 @@
         seen.add(w.actorId);
         if (!resumingSince.has(w.actorId)) resumingSince.set(w.actorId, now);
         const since = resumingSince.get(w.actorId);
-        if (now - since >= STUCK_MS && !stuck.has(w.actorId)){
+        if (now - since >= SLOW_MS && now - since < stuckMs() && !slow.has(w.actorId)){
+          slow.add(w.actorId);
+          log('info', `<b>⏳ ${w.actorTemplate || w.actorId}</b> slow restore: Resuming for ${Math.round((now - since) / 1000)}s (cold image pull?) — a ghost only past ${Math.round(stuckMs() / 1000)}s`);
+        }
+        if (now - since >= stuckMs() && !stuck.has(w.actorId)){
           const chip = chipName({ actorId: w.actorId, actorTemplateName: w.actorTemplate });
           const g = { chip, agent: w.actorTemplate || chip, pool: w.workerPool || '', pod: w.pod ?? w.workerPod, since };
           stuck.set(w.actorId, g);
@@ -1096,7 +1107,7 @@
         }
       }
     }
-    for (const id of [...resumingSince.keys()]) if (!seen.has(id)) resumingSince.delete(id);
+    for (const id of [...resumingSince.keys()]) if (!seen.has(id)) { resumingSince.delete(id); slow.delete(id); }
     for (const [id, g] of [...stuck]){
       if (seen.has(id)) continue;
       stuck.delete(id);
@@ -1285,7 +1296,7 @@
       // a session can complete entirely between two polls — a new session
       // actorId appearing for this agent proves the run happened even though
       // we never sampled it on a worker. Count it and flash the chip.
-      // rc2 pre-creates a Session's actor (CreateSession) as version 1 before it
+      // kagent 1.0 pre-creates a Session's actor (CreateSession) as version 1 before it
       // ever runs; only an actor that has run (version > 1) proves a session.
       // Keep never-run actors out of knownIds so their first run still counts.
       const ran = e => !(e.version > 0) || e.version > 1;
@@ -1841,6 +1852,7 @@
   // board did not send (kagent UI, Telegram, another Scope / stimulator)
   let routerParked = 0, lastOwnWait = 0, ownInflight = 0;
   let ctrBase = null, autoscaleOn = null;   // header counter baseline; last AUTOSCALE state seen
+  let routerBudget = null;                   // atenet-router parking budget, as Scope read it from the router ConfigMap
   function laneText(){
     // only when none of this board's chats are in flight (and none waited in
     // the last few seconds: the router gauge lags behind admissions)
@@ -1909,6 +1921,7 @@
         }
         break; }
       case 'router': {
+        routerBudget = ev.budget ?? routerBudget;
         const r = $('rstat');
         if (!ev.ok){ r.innerHTML = `<span class="na">router metrics unavailable: ${ev.error ?? '?'}</span>`; break; }
         // The router / ate-api counters are cumulative since those pods
@@ -2055,7 +2068,7 @@
               setState(a, 'queued', WHY[why.get(n)] ?? 'waiting');
               a.queuedAt = now;
               log('queue', `<b>queued</b> ${a.ns}/${n} — ${WHY[why.get(n)] ?? 'no free slot'}`);
-              actPush(n, 'queued', why.get(n) === 'retry' ? 'router gave up after its ~5s parking budget (send not accepted) — client retry backoff'
+              actPush(n, 'queued', why.get(n) === 'retry' ? 'router gave up after its ' + (routerBudget ? routerBudget + ' ' : '') + 'parking budget (send not accepted) — client retry backoff'
                                                           : 'no free slot — request parked in atenet-router', undefined, undefined, undefined, undefined, whyCtx.get(n));
             } else if (a.state === 'queued') a.el.querySelector('.meta').textContent = WHY[why.get(n)] ?? 'waiting';
           } else if (a.state === 'queued' && !a.unqueuedAt){

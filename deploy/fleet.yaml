@@ -1,9 +1,9 @@
-# Substrate Scope demo fleet: 13 general-purpose agents on kagent 1.0.0-rc2.
+# Substrate Scope demo fleet: 13 general-purpose agents on kagent 1.0 (built on rc2, runs on rc3 + Substrate 1.0.0).
 #
 # Each Agent runs on the `kagent` Harness below, whose Substrate WorkerPool is
 # kagent-default (created by the kagent chart): every agent is a suspended actor
 # (a snapshot) until a chat restores it onto a worker. 13 agents, one worker pod.
-# The kagent 1.0.0-rc2 installer creates the pool but NO Harness, so it is here.
+# The kagent 1.0 installer creates the pool but NO Harness, so it is here.
 #
 #   kubectl apply --dry-run=server -f deploy/fleet.yaml
 #   kubectl apply -f deploy/fleet.yaml
@@ -22,7 +22,7 @@ spec:
   kagent: {}
   substrate:
     workerPoolRef: {name: kagent-default}
-    # rc2 requires a per-Harness snapshot location
+    # kagent 1.0 requires a per-Harness snapshot location
     snapshotPolicy:
       location: gs://ate-snapshots/kagent/
 ---

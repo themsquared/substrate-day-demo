@@ -12,8 +12,8 @@ The live demo from **"kubectl is lying to you: what a live visualizer taught me 
 
 | Version pin | |
 | --- | --- |
-| kagent | `1.0.0-rc2` (CLI `v1.0.0-rc2`, checksum-verified) |
-| Agent Substrate | `1.0.0-rc2` (kagent-dev/substrate charts; upstream agent-substrate `v1.0.0-rc.2`) |
+| kagent | `1.0.0-rc3` (CLI `v1.0.0-rc3`, checksum-verified) |
+| Agent Substrate | `1.0.0` (kagent-dev/substrate charts `substrate-crds`, `substrate-podcert`, `substrate-atelet`, `substrate`; upstream agent-substrate `v1.0.0`) |
 | Kubernetes | `1.37.0` on kind (`kindest/node` pinned by digest) |
 | Model | Anthropic `claude-haiku-4-5` |
 
@@ -46,19 +46,22 @@ KUBE_CONTEXT=kind-substrate-day ./deploy/preflight.sh         # health check + o
 re-runnable: on an existing cluster it reconciles in about 10 seconds. Note that `kind create cluster`
 switches your current kubectl context to the new cluster.
 
-What `install/up.sh` does, and how long it took from scratch (two clean runs on the machine above, with the
-`kindest/node` image already pulled; the first pull of that image adds a few minutes, and the in-cluster image
-pulls depend on your network):
+What `install/up.sh` does, and how long it took from scratch (one clean run of this stack on the machine above,
+with the `kindest/node` image already pulled; the first pull of that image adds a few minutes, and the in-cluster
+image pulls depend on your network):
 
 | Step | Time |
 | --- | --- |
 | kind cluster (1 node, Kubernetes 1.37.0) | ~10 s |
-| kagent CLI download + checksum, then `kagent install`: Substrate, PostgreSQL, certificates, kagent | 3–5 min |
-| The fleet: Harness `kagent`, 13 agents on `kagent-default`, read-only on-call tools, offline Telegram plumbing, pool `kagent-oncall` + 5 on-call agents, all Ready | ~40 s |
-| **Total** | **4–6 min** (measured 4m10s and 6m01s) |
+| kagent CLI download + checksum, then `kagent install`: Substrate CRDs, certificate controller, PostgreSQL, atelet (its own `substrate-atelet` release since kagent 1.0.0-rc3), Substrate, kagent | ~4.5 min |
+| The fleet: Harness `kagent`, 13 agents on `kagent-default`, read-only on-call tools, offline Telegram plumbing, pool `kagent-oncall` + 5 on-call agents, all Ready | ~50 s |
+| **Total** | **~5.5 min** (measured 5m22s; the rc2 stack measured 4m10s and 6m01s) |
 
 When it finishes you have 18 Agents, all Ready, on **two worker pods** (one per WorkerPool, each sized
 2 CPU / 2304 Mi, so each holds 2 actors at kagent's 1 CPU / 1 Gi booking). No agent runs until you chat with it.
+Both pools run the worker image the installer pairs with its Substrate (`ateworker-gvisor:v1.0.0`): `up.sh`
+copies it from `kagent-default` onto `kagent-oncall`, because Substrate's version skew policy does not allow a
+worker older than `ate-api-server`.
 
 The Telegram beat is optional. `up.sh` installs its in-cluster parts offline (placeholder bot token, empty
 allowlist, no tunnel, no webhook) so `sre-oncall` is Ready; `deploy/telegram-up.sh` turns it on with your

@@ -40,7 +40,7 @@ spec:
       serviceAccountName: oncall-tools
       containers:
         - name: tools
-          image: ghcr.io/kagent-dev/kagent/tools:0.3.0   # same image the kagent 1.0.0-rc2 chart ships
+          image: ghcr.io/kagent-dev/kagent/tools:0.3.0   # same image the kagent 1.0.0-rc2 and rc3 charts ship
           command: [/tool-server]
           args: [--port, "8084", --metrics-port, "8085"]
           env:

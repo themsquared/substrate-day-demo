@@ -7,13 +7,17 @@ lib/grpcweb.mjs encodes/decodes against it. The schema comes from the release's
 own .proto files, compiled into a FileDescriptorSet:
 
   # from a kagent checkout at the release tag (proto/ holds kagent + ateapi + a2a)
-  buf build proto -o rc2.desc            # or:
+  buf build proto -o rc3.desc            # or:
   python3 -m grpc_tools.protoc -I proto -I <deps> --include_imports \\
-      --descriptor_set_out=rc2.desc \\
+      --descriptor_set_out=rc3.desc \\
       kagent/api/v1/system.proto kagent/api/v1/sessions.proto \\
       kagent/api/v1/agents.proto api/ateapi/v1/ateapi.proto a2a.proto
 
-  python3 tools/gen-schema.py rc2.desc > lib/schema.json
+  python3 tools/gen-schema.py rc3.desc > lib/schema.json
+
+<deps> holds buf/validate/validate.proto and google/api/{annotations,http}.proto.
+The checked-in schema is from kagent v1.0.0-rc3 (rc2 differs only by
+DeleteSessionRequest.force).
 
 Needs `pip install protobuf`. Only these packages are kept:
 kagent.api.v1, substrate.ateapi.v1, lf.a2a.v1, google.*

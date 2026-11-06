@@ -19,8 +19,11 @@ way it actually works:
   own bay. "N busy" counts bays the inventory says hold an actor. A pool with
   no worker pods is drawn as **NO WORKERS** and turns the banner red.
 - **Restore queue**: requests waiting for a slot. Substrate 1.0 *parks* them in
-  atenet-router (~5 s), then the kagent gateway answers "input was not
-  accepted; retry"; Scope shows both layers (parked in router / client retry),
+  atenet-router for its parking budget (`atenetRouter.requestParking.budget`:
+  5 s on the rc2 chart, 60 s on the 1.0.0 chart; Scope reads the live value
+  from the router ConfigMap and quotes it), then the kagent gateway answers
+  "input was not accepted; retry"; Scope shows both layers (parked in router /
+  client retry),
   one chip per waiting **chat** (a second chat for a busy agent queues too),
   plus the router's parking gauge and the router / scheduler failure counts.
   Those count from 0 when the page loads, and again from START and from each
@@ -28,8 +31,11 @@ way it actually works:
   Parking from clients Scope did not send is labelled as such.
 - **Object storage shelf**: every suspended agent as a snapshot, with
   per-agent snapshot counts (`1 snapshot`, `N snapshots`).
-- **👻 Ghosts**: rc2 can leave an actor stuck in Resuming after a cancelled
-  restore, holding a worker slot. An actor Resuming on a bay for over 20 s gets
+- **👻 Ghosts**: Substrate 1.0 can leave an actor stuck in Resuming after a
+  cancelled restore, holding a worker slot (seen on rc2; the 1.0.0 chart ships
+  the same agentgateway router image and the same ateapi code path, so a
+  bigger parking budget makes it rarer, not impossible). An actor Resuming on
+  a bay for over 20 s gets
   a 👻 badge (and the pool row a ghost count), the feed says
   `👻 <agent> stuck Resuming for Ns — RESET POOL frees it`, its time is not
   counted as work on the Fairness tab, and RESET POOL bounces every pool that
@@ -56,30 +62,59 @@ way it actually works:
 
 ## Version pins
 
-Validated together on a kind cluster (2026-11-04):
+| Component | Validated live (kind, 2026-11-04) | Ported to (source review, 2026-11-06) |
+| --- | --- | --- |
+| kagent (controller, UI, CLI, Helm charts `oci://ghcr.io/kagent-dev/kagent/helm/{kagent-crds,kagent}`) | `1.0.0-rc2` (git `4a5c758`) | `1.0.0-rc3` (git `3548b7a`) |
+| Agent Substrate (Helm charts `oci://ghcr.io/kagent-dev/substrate/helm/{substrate-crds,substrate-podcert,substrate}`; 1.0.0 adds `substrate-atelet`) | `1.0.0-rc2` (upstream `v1.0.0-rc.2`) | `1.0.0` (kagent-dev fork `563df06`; upstream `v1.0.0` is `b34fbee`) |
+| Worker image | `ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0-rc2` | `ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0` |
+| atenet-router | `cr.agentgateway.dev/agentgateway:v1.7.0` (digest `60216aaf…`) | same image, same digest |
+| Kubernetes | kind `v0.33.0`, node image `kindest/node:v1.37.0` | same |
+| Model | Anthropic `claude-haiku-4-5` (`ModelConfig default-model-config`) | same |
+| node | >= 20.3 (`AbortSignal.any`; tested on 25.2.1); zero npm dependencies | same |
 
-| Component | Version |
-| --- | --- |
-| kagent (controller, UI, CLI, Helm charts `oci://ghcr.io/kagent-dev/kagent/helm/{kagent-crds,kagent}`) | `1.0.0-rc2` (git `4a5c758`) |
-| Agent Substrate (Helm charts `oci://ghcr.io/kagent-dev/substrate/helm/{substrate-crds,substrate-podcert,substrate}`) | `1.0.0-rc2` (source tag `v1.0.0-rc.2`) |
-| Worker image | `ghcr.io/kagent-dev/substrate/ateworker-gvisor:v1.0.0-rc2` |
-| Kubernetes | kind `v0.33.0`, node image `kindest/node:v1.37.0` |
-| Model | Anthropic `claude-haiku-4-5` (`ModelConfig default-model-config`) |
-| node | >= 20.3 (`AbortSignal.any`; tested on 25.2.1); zero npm dependencies |
+**What "ported" means here.** The rc2 column ran end to end on a cluster. For
+kagent 1.0.0-rc3 + Substrate 1.0.0 this build was checked against the release
+sources and the published charts, not yet against a live rc3 cluster:
+
+- `lib/schema.json` is regenerated from the rc3 protos. Its diff against rc2
+  is one field, `DeleteSessionRequest.force` (bool). No message, enum or
+  method was added, renamed or removed in the packages Scope uses.
+- Every controller file Scope talks to is byte-identical rc2 → rc3:
+  `grpcserver/grpcweb.go` and `system.go` (SystemService inventory),
+  `a2agateway/http.go` (`POST /agents/{ns}/{name}`, `-32004` / `-32001`),
+  `utils/a2a_version.go` (`A2A-Version: 1.0`). SessionService Create and
+  List are unchanged; Delete gained `force`.
+- One behavioural change in rc3's `session/interactions.go`: a retried
+  message with the same `messageId` inside an existing session now returns
+  the saved task instead of opening another. Scope never reuses a messageId
+  inside a session (`converse()` numbers each attempt), so nothing changes.
+- The kagent chart values are identical rc2 → rc3 outside comments
+  (`runtimeDefaults` cpu 1 / memory 1Gi still sizes the bays).
+- The Substrate 1.0.0 chart raises the router's parking budget default from
+  `5s` to `60s` and adds `requestTimeout: 60s`; `kagent install` sets
+  neither. Scope and the preflight read the live value instead of assuming
+  one. On a default 1.0.0 install a pool-full chat waits up to 60 s before
+  the gateway answers `-32004`, so the client-retry lane fills much later.
+- The Prometheus metric names come from the agentgateway image, which the
+  1.0.0 chart pins at the same digest as rc2.
+
+Run `deploy/preflight.sh` on an rc3 cluster before trusting any of this on
+stage; it prints the kagent version and the parking budget it found.
 
 Scope 0.1 (git history before this port) targets kagent 0.10 + Substrate 0.0.9.
 Pointed at a 0.10 controller this build detects it and draws the board
 read-only with a warning.
 
-## Quickstart (kind + kagent 1.0.0-rc2)
+## Quickstart (kind + kagent 1.0.0-rc3, or rc2)
 
 ```bash
 # 1. a kind cluster prepared for Substrate (local registry, gVisor-ready nodes)
-git clone --branch v1.0.0-rc.2 https://github.com/agent-substrate/substrate.git
+git clone --branch v1.0.0 https://github.com/agent-substrate/substrate.git   # v1.0.0-rc.2 for an rc2 rig
 KIND_CLUSTER_NAME=substrate-day substrate/hack/create-kind-cluster.sh
 
-# 2. kagent 1.0.0-rc2 with Substrate, via the kagent CLI
-#    (release asset kagent-<os>-<arch> from github.com/kagent-dev/kagent/releases/tag/v1.0.0-rc2)
+# 2. kagent with Substrate, via the kagent CLI: release asset kagent-<os>-<arch> from
+#    github.com/kagent-dev/kagent/releases/tag/v1.0.0-rc3 (pairs with Substrate 1.0.0 and
+#    installs atelet as its own substrate-atelet release) — or v1.0.0-rc2 for an rc2 rig
 cat > kagent-cli-config.yaml <<'EOF'
 install:
   defaultModelProvider: Anthropic
@@ -139,11 +174,14 @@ an **empty 200** from a catch-all). Scope speaks the new surfaces directly:
 | Agent → pool | `agents.api.kagent.dev` `spec.harnessRef` → `harnesses.api.kagent.dev` `spec.substrate.workerPoolRef` (kubectl) |
 | Actor size | controller ConfigMap `runtimeDefaults` (limits, default cpu 1 / memory 1Gi) |
 | Parking / capacity | Prometheus via the API server pod proxy: `agentgateway_substrate_request_parking_active` (atenet-router :15020), `agentgateway_atenet_router_route_duration_seconds_count{ate_router_outcome}`, `ate_scheduler_assignment_duration_seconds_count{ate_scheduler_outcome="no_capacity"}` (ate-api-server :9090) |
+| Parking budget | ConfigMap `atenet-router-agentgateway-config` in `ate-system` (`requestParking.budget`, `requestTimeout`; kubectl), shown in the feed and in `/status` as `router.budget` |
 | Worker CPU / memory | kubelet `stats/summary` through the API server (no metrics-server) |
 
 Regenerate the schema for another release with
 `python3 tools/gen-schema.py <FileDescriptorSet> > lib/schema.json`
 (see the script header for building the descriptor set from kagent's `proto/`).
+The checked-in schema is from kagent `v1.0.0-rc3`; rc2's differs only by
+`DeleteSessionRequest.force`, so one file serves both.
 
 ## Worker sizing
 
@@ -274,7 +312,7 @@ Helm upgrade that manages the pool needs `--force-conflicts`.
 | `KAGENT_API` | own port-forward | controller base URL |
 | `SCOPE_POOL` | `kagent-default` | pool for RESET POOL (plus any pool holding a 👻 ghost), header +/-, SURGE |
 | `SCOPE_SURGE_POOLS` / `SCOPE_AUTOSCALE_POOLS` | `SCOPE_POOL` | comma-separated |
-| `SCOPE_AUTOSCALE_MIN` | `1` | autoscaler floor, in pods (an rc2 worker sized at kagent's booking already holds 2 actors) |
+| `SCOPE_AUTOSCALE_MIN` | `1` | autoscaler floor, in pods (a Substrate 1.0 worker sized at kagent's booking already holds 2 actors) |
 | `SCOPE_MAX_SLOTS` | `8` | bays drawn per worker pod |
 | `SCOPE_CHAT_BUDGET` | `0` (none) | cap on chats Scope itself sends |
 | `UNIT_CPU_M` / `UNIT_MEM_MI` / `UNIT_SOURCE` | `100` / `384` / kagent 0.10.5 | always-on baseline |

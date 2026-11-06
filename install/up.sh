@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stand up the whole demo on a laptop: kind cluster -> Substrate 1.0.0-rc2 + kagent 1.0.0-rc2
+# Stand up the whole demo on a laptop: kind cluster -> Agent Substrate 1.0.0 + kagent 1.0.0-rc3
 # (via the pinned kagent CLI) -> the 18-agent fleet.
 #
 #   ANTHROPIC_KEY_FILE=~/.anthropic_key ./install/up.sh
@@ -11,7 +11,7 @@ cd "$(dirname "$0")/.."
 
 CLUSTER=${CLUSTER:-substrate-day}
 CTX=kind-$CLUSTER
-KAGENT_VERSION=v1.0.0-rc2
+KAGENT_VERSION=v1.0.0-rc3   # pairs with Agent Substrate 1.0.0 (the CLI pins the Substrate charts and worker image)
 KEYFILE=${ANTHROPIC_KEY_FILE:-$HOME/.anthropic_key}
 BIN=install/bin
 KUBECONFIG_FILE=install/kubeconfig-$CLUSTER   # isolated: the installer only ever sees this cluster
@@ -36,7 +36,9 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "unsupported platform"; exit 1 ;;
 esac
 mkdir -p "$BIN"
-if [ ! -x "$BIN/kagent" ]; then
+# Re-download when the pin moves: an older CLI in install/bin would install an older stack.
+if ! { [ -x "$BIN/kagent" ] && "$BIN/kagent" version 2>/dev/null | grep -q "\"kagent_version\":\"${KAGENT_VERSION#v}\""; }; then
+  rm -f "$BIN/kagent"
   base=https://github.com/kagent-dev/kagent/releases/download/$KAGENT_VERSION
   curl -fsSL "$base/$asset" -o "$BIN/$asset"
   want=$(curl -fsSL "$base/$asset.sha256" | awk '{print $1}')
@@ -45,7 +47,12 @@ if [ ! -x "$BIN/kagent" ]; then
   mv "$BIN/$asset" "$BIN/kagent"; chmod +x "$BIN/kagent"
 fi
 
-# 3. Substrate + kagent (the CLI installs Substrate, PostgreSQL, certificates, then kagent)
+# 3. Substrate + kagent. The CLI installs, in order: kagent-crds, substrate-crds, the
+# certificate controller (substrate-podcert), PostgreSQL, atelet as its own release
+# (substrate-atelet, waited for), Substrate with atelet.enabled=false, then kagent.
+# It enables the Substrate preview gates PerTemplateSnapshotLocation and
+# GoldenEgressPolicy (kagent 1.0.0-rc3 needs both) and sets the kagent-default
+# pool's worker image to the Substrate version it pairs with (ateworker-gvisor:v1.0.0).
 printf 'install:\n  defaultModelProvider: Anthropic\n  kagent:\n    valuesFiles: [%s]\n' "$PWD/install/kagent-values.yaml" > install/kagent-cli-config.yaml
 ANTHROPIC_API_KEY="$(tr -d '[:space:]' < "$KEYFILE")" KUBECONFIG="$KUBECONFIG_FILE" \
   "$BIN/kagent" install --config install/kagent-cli-config.yaml --timeout 15m
@@ -71,7 +78,12 @@ K get configmap telegram-config -n kagent >/dev/null 2>&1 \
 K create configmap telegram-src -n kagent --from-file=telegram/doorbell.mjs --from-file=telegram/mcp.mjs \
   --dry-run=client -o yaml | K apply -f - >/dev/null
 K apply -f deploy/telegram.yaml
-kubectl --context "$CTX" apply -f deploy/oncall.yaml
+# deploy/oncall.yaml pins the on-call pool's worker image (currently the rc2 image the
+# live cluster runs). Substrate's version skew policy does not allow a worker older
+# than ate-api-server, so give the pool the image the installer gave kagent-default.
+WORKER_IMAGE=$(K get workerpools.ate.dev kagent-default -n kagent -o jsonpath='{.spec.workerImage}')
+[ -n "$WORKER_IMAGE" ] || { echo "WorkerPool kagent/kagent-default has no workerImage"; exit 1; }
+sed "s#^\(  workerImage: \).*#\1$WORKER_IMAGE#" deploy/oncall.yaml | K apply -f -
 kubectl --context "$CTX" wait --for=condition=Ready agents.api.kagent.dev --all -n kagent --timeout=10m
 
 echo

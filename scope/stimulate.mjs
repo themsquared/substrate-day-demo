@@ -44,8 +44,9 @@ const KUBE_CONTEXT = process.env.KUBE_CONTEXT || '';
 const KAGENT_USER = process.env.KAGENT_USER || 'admin@kagent.dev';
 // A2A messageIds start with "stim-" so Scope's session ingest knows these
 // turns are ours (the board already shows them through /activity).
-// Pool-full (rc2: JSON-RPC -32004 KAGENT_SEND_NOT_ACCEPTED after the
-// router's parking budget runs out) is recognised by lib/kagent.mjs.
+// Pool-full (kagent 1.0: JSON-RPC -32004 KAGENT_SEND_NOT_ACCEPTED after the
+// router's parking budget runs out — 5s on the rc2 chart, 60s on the 1.0.0
+// chart) is recognised by lib/kagent.mjs.
 
 const QUICK_PROMPTS = [
   'In one short sentence, what is your job?',

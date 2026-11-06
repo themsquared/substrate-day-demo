@@ -1,4 +1,4 @@
-# kind cluster for Agent Substrate 1.0.0-rc2 (from substrate's hack/create-kind-cluster.sh, ipv4).
+# kind cluster for Agent Substrate 1.0.0 (from substrate's hack/create-kind-cluster.sh, ipv4).
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 nodes:

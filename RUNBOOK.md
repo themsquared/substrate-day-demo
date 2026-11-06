@@ -1,19 +1,19 @@
-# Demo runbook: kagent 1.0.0-rc2 + Substrate 1.0.0-rc2
+# Demo runbook: kagent 1.0.0-rc3 + Substrate 1.0.0 (rig kind-substrate-day-ga, rebuilt Fri 2026-11-06)
 
-Agent Substrate Day, Mon 2026-11-09. Live demo slot: deck slide 9 (3:25) to the money slide. The demo is **5:00 including the 60 s Telegram beat**. The 11-04 dress rehearsal fits it in 4:15 (section 3).
+Agent Substrate Day, Mon 2026-11-09. Live demo slot: deck slide 4 (2:00) to the money slide. The demo is **5:00 including the 60 s Telegram beat**. The 11-04 dress rehearsal fits it in 4:15 (section 3).
 This file replaces `~/AgentSubstrate/DEMO-RUNBOOK.md` (that one is for kagent 0.10 / Substrate 0.0.9. Do not use it.)
 
-Rig: kind cluster `kind-substrate-day`, 18 Agents (13 on WorkerPool `kagent-default`, 5 on `kagent-oncall`).
+Rig: kind cluster `kind-substrate-day-ga`, 18 Agents (13 on WorkerPool `kagent-default`, 5 on `kagent-oncall`).
 Each pool runs 1 worker pod with limits 2 CPU / 2304Mi, which gives 2 actor slots (actors are booked at 1 CPU / 1Gi). At rest there are **2 worker pods**.
 Model: Anthropic `claude-haiku-4-5`. This is a paid API, so every chat costs money.
 
 Shorthand used below (paste it into every terminal you use):
 
 ```bash
-k() { kubectl --context kind-substrate-day "$@"; }
+k() { kubectl --context kind-substrate-day-ga "$@"; }
 ```
 
-Tags: **[ran]** = I ran this read-only against kind-substrate-day on 2026-11-04 and the output shown is real.
+Tags: **[ran]** = I ran this read-only against kind-substrate-day-ga on 2026-11-04 and the output shown is real.
 **[code]** = state-changing; I checked it against the code or flags, or ran it as a server dry run, but did not execute it.
 **[UNVERIFIED]** = not checked. Rehearse it.
 
@@ -30,7 +30,7 @@ Tags: **[ran]** = I ran this read-only against kind-substrate-day on 2026-11-04 
 | 2b | gVisor networking sysctl (lost if Docker restarts) | `docker exec substrate-day-control-plane sysctl net.ipv4.conf.all.proxy_arp` [ran] | `= 1`. If 0: `docker exec substrate-day-control-plane sysctl -q net.ipv4.conf.all.proxy_arp=1` [code: from install/up.sh] |
 | 3 | 18 Agents Ready | `k get agents.api.kagent.dev -n kagent --no-headers \| wc -l` [ran] | `18`. Every row in `k get agents.api.kagent.dev -n kagent` shows `READY True`. |
 | 4 | Pools at 1 pod each | `k get workerpools.ate.dev -n kagent` [ran] | `kagent-default 1 1 1` and `kagent-oncall 1 1 1`. If default is higher, run `k scale workerpools.ate.dev kagent-default -n kagent --replicas=1` [code: dry-run=server ok] |
-| 5 | Full preflight (**1 billable turn**) | `cd ~/substrate-day-demo && KUBE_CONTEXT=kind-substrate-day ./deploy/preflight.sh` [ran] | `preflight passed`, exit 0. On 11-04: 18 Agents Ready, 2 workers, metrics ok, k8s-tutor turn 742 ms. `SKIP_TURN=1` skips the turn. |
+| 5 | Full preflight (**1 billable turn**) | `cd ~/substrate-day-demo && KUBE_CONTEXT=kind-substrate-day-ga ./deploy/preflight.sh` [ran] | `preflight passed`, exit 0. On 11-04: 18 Agents Ready, 2 workers, metrics ok, k8s-tutor turn 742 ms. `SKIP_TURN=1` skips the turn. |
 | 6 | Anthropic key (never printed) | see block A below [ran] | `cluster key == ~/.anthropic_key` and `200` |
 | 7 | Telegram | see block B below [ran] | all ok |
 
@@ -88,10 +88,10 @@ If nothing is listening, start Scope in terminal 1 and leave it visible on the l
 
 ```bash
 cd ~/substrate-day-demo/scope
-KUBE_CONTEXT=kind-substrate-day SCOPE_START_STOPPED=1 node server.mjs --live
-# prints: Substrate Scope → http://127.0.0.1:8123 (LIVE, context kind-substrate-day ...)
+KUBE_CONTEXT=kind-substrate-day-ga SCOPE_START_STOPPED=1 node server.mjs --live
+# prints: Substrate Scope → http://127.0.0.1:8123 (LIVE, context kind-substrate-day-ga ...)
 #         [scope] SCOPE_START_STOPPED=1: demo starts STOPPED — press START when ready
-#         [scope] OK: kagent 1.0.0-rc2 · substrate 1.0.0-rc2 · 2 pool(s), 18 agents
+#         [scope] OK: kagent 1.0.0-rc3 · substrate 1.0.0 · 2 pool(s), 18 agents
 ```
 
 [code + ran: the same command is running from ~/substrate-scope through the preview server. The scope/ copy matches that file for file.]
@@ -116,7 +116,7 @@ node stimulate.mjs --budget 12 --concurrency 1 --oversub 0
 
 ## 3. The beats (talk order, 5:00 including Telegram)
 
-Times are offsets from switching to the demo at slide 9 (3:25). The plan below uses **4:15 of 5:00**, so 45 s is spare for questions or a slow reply.
+Times are offsets from switching to the demo at slide 4 (2:00). The plan below uses **4:15 of 5:00**, so 45 s is spare for questions or a slow reply.
 The long pole is the pool walk-down: SURGE to `1 pod` took **71 s** [ran]. Telegram fills that time. **The money chart goes last, after the pool is back to 1 pod.**
 
 **Dress rehearsal, 2026-11-04 18:11 PT** [ran, from a clean reset]: two SURGEs, the stopwatch log, a 1 Hz `/status` timeline, and a DOM sampler. Telegram was skipped and given 60 s.
@@ -173,8 +173,8 @@ Optional, at the same time, in terminal 2: `cd ~/substrate-day-demo/scope && nod
 - Check that stimulate has finished, if you ran it (terminal 2 shows `budget reached`).
 - Press **SURGE** **once**. It sends 13 real chats, one to every Ready agent on `kagent-default`.
 - [ran 18:13:48 and 18:15:04] Within 2 to 3 s, both bays show `2 busy (FULL)` and **10 to 11 chips** land in the **Restore queue** lane, marked `QUEUED · parked in router`. Some change to `client retry`. Header readouts: `parked in atenet-router 11`, then `router gave up` climbs to 12 to 15 and `scheduler no_capacity` to 230 to 280, as deltas `since SURGE hh:mm`.
-- Say this while the lane is full (about 8 s): "New in 1.0, the router *parks* the request for up to 5 s instead of failing it, then the gateway says retry. no_capacity is a metric now, not a log line. And nobody picks who goes first."
-- **Do not wait longer than about 10 s.** On 1 pod, the lane drains by itself in about 25 s (18:13:48 to 18:14:13). In the first rehearsal pass, AUTOSCALE was pressed 28 s after SURGE, the lane was already empty, and nothing scaled.
+- **On 1.0 the park budget is 60 s** (rc2 rig: 5 s). So on this rig the chips stay `QUEUED · parked in router`; none flip to `client retry`, and `router gave up` stays 0 while `scheduler no_capacity` climbs (GA rehearsal 11-06: `parked in atenet-router 11`, no_capacity 109 at +3.5 s). Say while the lane is full: "New since my first rig, the router *parks* a pool-full request instead of failing it: sixty seconds on 1.0, five on the rc2 I built on. no_capacity is a metric now, not a log line. And nobody picks who goes first."
+- **Do not wait longer than about 10 s.** On 1 pod the lane drains by itself (rc2: ~25 s; GA with AUTOSCALE pressed at +7 s: empty 14.8 s after SURGE, pool 1 → 5 → 1, scale-up 1.6 s after the press, walk-down 46.6 s after). If AUTOSCALE is pressed after the lane is empty, nothing scales.
 
 ### Beat 4: AUTOSCALE (T+1:43 to 1:55)
 
@@ -201,12 +201,12 @@ Not rehearsed on 11-04 (no Telegram messages were allowed). Budget 60 s. Measure
 First look at the `kagent-default` row and the feed. There are two cases.
 
 **A. A ghost is on the board.** A chip stuck Resuming on a bay for 20 s or more gets a 👻 badge and a dashed red outline, and its meta line reads `👻 stuck Resuming Ns`. The pool row adds `· 👻 1 ghost`. The feed logs `👻 <agent> stuck Resuming for Ns — RESET POOL frees it`. Fairness does not count ghost time as work.
-- Point at it. Say: "That actor is holding a slot and doing nothing. On rc2 a request that runs out its 5-second park can strand the restore halfway, and nobody comes back for it. Scope flags it after 20 seconds."
+- Point at it. Say: "That actor is holding a slot and doing nothing. A request that runs out its park budget strands the restore halfway, and nobody comes back for it. On rc2's five-second budget I got three per surge; 1.0's sixty makes it rare, not gone." (Scope now says `⏳ slow restore` at 20 s and only calls it a 👻 past the budget + 15 s, so a cold image pull is not mistaken for a ghost.)
 - Press **RESET POOL**. It bounces `kagent-default` plus every pool that holds a ghost. The feed logs `frees N ghost(s)`, then `👻 <agent> ghost cleared by RESET POOL — it held a slot for Ns`. [code + fake feed only: no real ghost appeared on 11-04 after the one-session-per-chat fix]
 - If the walk-down deletes the ghost's pod first, the feed logs `👻 <agent> ghost left Resuming — it held a slot …` and the badge is gone before you reach it. Then use case B.
 
 **B. No ghost** (what happened in both 11-04 SURGEs: 0 ghosts in 26 chats. Before the one-session-per-chat fix, 3 of 13 SURGE chats became ghosts.)
-- Say: "On rc2, a request that times out of its park can leave a ghost: an actor stuck Resuming, holding a slot. Scope retries into the same Session now, so we did not get one today. The fix, when you do, is one button."
+- Say: "On the rc2 rig a request that timed out of its five-second park left a ghost: an actor stuck Resuming, holding a slot; upstream tracks it as #2059. Same router image on 1.0, sixty-second budget, and Scope retries into the same Session now, so we did not get one today. The fix, when you do, is one button."
 - Press **RESET POOL** at rest. The feed logs one line (`reset rollout restart kagent-default …`, plus the ghosts it frees, if any). The pod name on the bays changes within about 2 s. **There is no `NO WORKERS` banner** (verified 11-04 19:00: health stayed ok for 20 s through the restart; the health check now counts workers ateapi reports ACTIVE, not the lagging WorkerPool status). The CPU caption blips to `reserved 750m` for a moment, then goes back to 500m. Say: "New pod, same eighteen snapshots."
 
 ### Beat 7: the money chart (T+3:20 to 4:05). Only after the default row shows `1 pod`.
@@ -247,7 +247,7 @@ k create secret generic kagent-anthropic -n kagent --from-file=ANTHROPIC_API_KEY
   < <(tr -d '[:space:]' < ~/.anthropic_key) | k apply -f -
 k rollout restart deploy/k8s-credential-provider deploy/atenet-egress -n ate-system
 k rollout status deploy/k8s-credential-provider -n ate-system; k rollout status deploy/atenet-egress -n ate-system
-# then block A, and one turn: KUBE_CONTEXT=kind-substrate-day ./deploy/preflight.sh
+# then block A, and one turn: KUBE_CONTEXT=kind-substrate-day-ga ./deploy/preflight.sh
 ```
 (The two ate-system restarts are the procedure the lead verified on 11-04. Their `restartedAt` annotations are 15:52. I did not re-run them.)
 
@@ -262,7 +262,7 @@ k rollout status deploy/k8s-credential-provider -n ate-system; k rollout status 
 - No `deploy/telegram-up.sh` (it rolls the doorbell and loses your Session) and no `--register` / setWebhook. The webhook is pinned (`WEBHOOK_IP` set) and working.
 - Never `k get secret ... -o yaml` on the projector. The `kagent-anthropic` Secret carries a `last-applied-configuration` annotation that contains the key.
 - Doorbell / telegram-mcp logs contain your chat id: laptop only, never projected.
-- Always use `--context kind-substrate-day` (the `k` function). Other kube contexts exist on this Mac.
+- Always use `--context kind-substrate-day-ga` (the `k` function). Other kube contexts exist on this Mac.
 
 ---
 
@@ -273,12 +273,12 @@ Every chat (stimulate, SURGE, TALK TO IT, Telegram, the preflight turn) creates 
 1. Press **STOP DEMO**. Set **AUTOSCALE** to OFF (with it ON, Scope owns the pool size and can scale again after the reset). Ctrl-C any stimulate.
 2. Dry run (the default; changes nothing):
    ```bash
-   cd ~/substrate-day-demo && KUBE_CONTEXT=kind-substrate-day ./deploy/reset-rehearsal.sh
+   cd ~/substrate-day-demo && KUBE_CONTEXT=kind-substrate-day-ga ./deploy/reset-rehearsal.sh
    ```
    It prints the before counts, the Sessions it would delete (by agent), and any it skips.
 3. Act:
    ```bash
-   KUBE_CONTEXT=kind-substrate-day ./deploy/reset-rehearsal.sh --yes
+   KUBE_CONTEXT=kind-substrate-day-ga ./deploy/reset-rehearsal.sh --yes
    ```
    It does these steps:
    - It deletes every Session of an Agent in `kagent` with `SessionService/DeleteSession` (the RPC that `kagent agent session delete ID` calls). The call is sent as each Session's creator. **This also deletes the Session's Substrate actor.**
@@ -289,7 +289,7 @@ Every chat (stimulate, SURGE, TALK TO IT, Telegram, the preflight turn) creates 
    - It prints the after counts and checks that all Agents are Ready.
    - It never touches ActorTemplates, golden snapshots, tags, Agents, other namespaces, or other contexts. A second run finds nothing to delete (idempotent). Exit code 0 means everything is ok.
    - Options: `--no-doorbell-restart`, `--keep-pools`, `--concurrency N` (default 4).
-4. Check: the board header shows `18 AGENTS · 2 WORKER PODS · 0–1 SESSIONS`. The shelf still lists all 18 agents, because their golden snapshots are kept. Optional, one billable turn: `KUBE_CONTEXT=kind-substrate-day ./deploy/preflight.sh`.
+4. Check: the board header shows `18 AGENTS · 2 WORKER PODS · 0–1 SESSIONS`. The shelf still lists all 18 agents, because their golden snapshots are kept. Optional, one billable turn: `KUBE_CONTEXT=kind-substrate-day-ga ./deploy/preflight.sh`.
 5. **Reload the board tab after the script** (or restart Scope for a fully clean feed). The script deletes every session at once, and an open page logs a burst of false `ran + checkpointed between samples` lines for it. A VIEW flip does not clear anything. Router and scheduler deltas reset on page load, START and each SURGE.
 6. Leave Scope at `VIEW: AGENTS`, `AUTOSCALE: OFF`, `DEMO STOPPED`.
 
