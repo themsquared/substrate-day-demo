@@ -63,7 +63,8 @@ fi
 # It enables the Substrate preview gates PerTemplateSnapshotLocation and
 # GoldenEgressPolicy (kagent 1.0.0-rc3 needs both) and sets the kagent-default
 # pool's worker image to the Substrate version it pairs with (ateworker-gvisor:v1.0.0).
-printf 'install:\n  defaultModelProvider: Anthropic\n  kagent:\n    valuesFiles: [%s]\n' "$PWD/install/kagent-values.yaml" > install/kagent-cli-config.yaml
+printf 'install:\n  defaultModelProvider: Anthropic\n  kagent:\n    valuesFiles: [%s]\n  atelet:\n    valuesFiles: [%s]\n' \
+  "$PWD/install/kagent-values.yaml" "$PWD/install/substrate-atelet-values.yaml" > install/kagent-cli-config.yaml
 ANTHROPIC_API_KEY="$(tr -d '[:space:]' < "$KEYFILE")" KUBECONFIG="$KUBECONFIG_FILE" \
   "$BIN/kagent" install --config install/kagent-cli-config.yaml --timeout 15m
 

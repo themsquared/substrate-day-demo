@@ -1,0 +1,11 @@
+# Extra values for the substrate-atelet chart, passed by install/up.sh through the
+# kagent CLI's install.atelet.valuesFiles.
+#
+# atelet evicts images from its node cache when the node disk passes 85% used and
+# re-pulls the harness image on the next restore (13-55 s instead of ~1 s). On a
+# laptop whose Docker VM disk is already near that line, raise the watermarks so
+# the cache stays warm. Defaults: high 85, low 80 (cmd/atelet/imagegc.go).
+atelet:
+  extraArgs:
+    - --image-cache-high-percent=95
+    - --image-cache-low-percent=90
