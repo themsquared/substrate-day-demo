@@ -22,8 +22,18 @@ node -e 'process.exit(typeof AbortSignal.any === "function" ? 0 : 1)' \
   || { echo "node $(node --version) is too old: Scope needs node >= 20.3"; exit 1; }
 
 # 1. kind cluster
+echo "cluster: $CLUSTER (context $CTX); pick another with CLUSTER=<name>"
 if ! kind get clusters | grep -qx "$CLUSTER"; then
   kind create cluster --name "$CLUSTER" --config install/kind-config.yaml
+else
+  # a cluster that exists but whose node container was stopped (docker stop) must be started first
+  for node in $(kind get nodes --name "$CLUSTER"); do
+    if [ "$(docker inspect -f '{{.State.Running}}' "$node")" != "true" ]; then
+      echo "node $node is stopped; starting it"; docker start "$node" >/dev/null
+    fi
+  done
+  for i in $(seq 1 60); do kubectl --context "$CTX" get --raw /readyz >/dev/null 2>&1 && break; sleep 2; done
+  kubectl --context "$CTX" get --raw /readyz >/dev/null 2>&1 || { echo "cluster $CLUSTER exists but its API server did not come up; delete it with: kind delete cluster --name $CLUSTER"; exit 1; }
 fi
 # gVisor loopback pod-to-pod networking needs proxy ARP on the node
 for node in $(kind get nodes --name "$CLUSTER"); do docker exec "$node" sysctl -q net.ipv4.conf.all.proxy_arp=1; done
