@@ -97,7 +97,13 @@
           border:1px solid var(--line);border-radius:5px;width:22px;height:20px;cursor:pointer;line-height:1}
   .plabel .pc button:hover{border-color:var(--hot);color:var(--hot)}
   .prow{display:flex;gap:12px;flex-wrap:wrap}
-  .bay.podstart{margin-left:6px}
+  .pod{display:flex;flex-direction:column;gap:6px;padding:8px 8px 8px;border-radius:12px;
+       border:1px solid var(--line);background:rgba(255,255,255,.02)}
+  .pod .podhead{display:flex;justify-content:space-between;gap:10px;font-family:var(--mono);font-size:10px;color:var(--faint);padding:0 2px}
+  .pod .podhead b{color:var(--ink);font-weight:600}
+  .pod.warming{border-style:dashed;border-color:rgba(125,214,232,.55)}
+  .pod.draining{border-style:dashed;border-color:rgba(242,143,173,.6)}
+  .pod .podslots{display:flex;gap:8px}
   .bay .slotn{position:absolute;top:6px;right:10px;font-family:var(--mono);font-size:9px;color:var(--faint)}
   .banner{display:none;border-radius:10px;padding:10px 14px;font-family:var(--mono);font-size:12px;
           line-height:1.5;border:1px solid}
@@ -1003,17 +1009,27 @@
     }
     // the gap between two pods is per ROW: the first pod of every pool starts
     // flush (one shared lastPod pushed the second pool's row 6px right)
-    const lastPod = {};
+    // One frame per worker POD, its actor slots as bays inside it: a pod sized
+    // for two actors is one worker with two bays, not two workers.
+    const podBox = {};   // pool/pod -> .podslots element
     list.forEach(({key, pool, pod, slot, slots, warming, draining}, i) => {
+      const pk = `${pool}/${pod}`;
+      if (!podBox[pk]){
+        const box = document.createElement('div');
+        box.className = 'pod' + (warming ? ' warming' : '') + (draining ? ' draining' : '');
+        box.title = pod;
+        box.innerHTML = `<div class="podhead"><span><b>worker</b> …${pod.slice(-5)}</span><span>${slots} slot${slots === 1 ? '' : 's'}${draining ? ' · draining' : warming ? ' · warming' : ''}</span></div><div class="podslots"></div>`;
+        rows[pool].appendChild(box);
+        podBox[pk] = box.querySelector('.podslots');
+      }
       const el = document.createElement('div');
       // a worker that has not reported ACTIVE yet: booting, no actor placed on it
-      el.className = 'bay' + (lastPod[pool] && pod !== lastPod[pool] ? ' podstart' : '') + (warming ? ' warming' : '');
-      lastPod[pool] = pod;
+      el.className = 'bay' + (warming ? ' warming' : '');
       const n = kept.get(key) ?? 0;
       el.title = `${pod} · slot ${slot + 1} of ${slots}`;
-      el.innerHTML = `<span class="tag">…${pod.slice(-5)}</span><span class="slotn">slot ${slot + 1}</span>
+      el.innerHTML = `<span class="slotn">slot ${slot + 1}</span>
                       <span class="sess">${draining ? 'draining · leaving the pool' : warming ? 'warming · joining the pool' : `${n} session${n===1?'':'s'}`}</span>`;
-      rows[pool].appendChild(el);
+      podBox[pk].appendChild(el);
       workers.push({ id:i, el, actor:null, sessions:n, ready:!warming, warming, draining, pod: key, realPod: pod, slot, pool, tenantId:null });
     });
     refreshPoolLabels();
